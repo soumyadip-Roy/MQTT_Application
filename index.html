@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>EMQX MQTT WebSocket Dashboard</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #fafafa;
+            margin: 20px;
+            color: #333;
+        }
+        h2 {
+            text-align: center;
+        }
+        #controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        button {
+            margin: 5px;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            text-align: center;
+            padding: 10px;
+        }
+        th {
+            background-color: #007bff;
+            color: white;
+        }
+        #log {
+            background: #000;
+            color: #0f0;
+            padding: 10px;
+            font-size: 0.9rem;
+            height: 150px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <h2> EMQX MQTT WebSocket Dashboard</h2>
+
+    <div id="controls">
+        <button id="connectBtn">Connect</button>
+        <button id="disconnectBtn" disabled>Disconnect</button>
+    </div>
+
+    <table id="dataTable">
+        <thead>
+            <tr>
+                <th>Timestamp</th>
+                <th>Meter ID</th>
+                <th>Customer ID</th>
+                <th>Voltage (V)</th>
+                <th>Current (A)</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <pre id="log"></pre>
+
+    <script>
+        const log = (msg) => {
+            const logBox = document.getElementById("log");
+            logBox.textContent += msg + "\n";
+            logBox.scrollTop = logBox.scrollHeight;
+        };
+
+        const brokerUrl = "ws://localhost:8083/mqtt";
+        const topic = "esp32/data/team_b_proj/meter_1123";
+        let client;
+
+        const connectBtn = document.getElementById("connectBtn");
+        const disconnectBtn = document.getElementById("disconnectBtn");
+
+        connectBtn.onclick = () => {
+            client = mqtt.connect(brokerUrl, {
+                clientId: "client_" + Math.random().toString(16).substr(2, 8)
+            });
+
+            client.on("connect", () => {
+                log("Connected to broker");
+                client.subscribe(topic, (err) => {
+                    if (!err) log(" Subscribed to topic: " + topic);
+                    else log(" Subscribe error: " + err.message);
+                });
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+            });
+
+            client.on("message", (topic, message) => {
+                let msgStr = message.toString();
+                log(`Received on ${topic}: ${msgStr}`);
+
+                try {
+                    const data = JSON.parse(msgStr);
+                    addRowToTable(data);
+                } catch (e) {
+                    log(" Invalid JSON format");
+                }
+            });
+
+            client.on("error", (err) => log(" Connection error: " + err.message));
+
+            client.on("close", () => {
+                log("🔌 Disconnected from broker");
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+            });
+        };
+
+        disconnectBtn.onclick = () => {
+            if (client && client.connected) {
+                client.end(true, () => {
+                    log(" Disconnected manually");
+                    connectBtn.disabled = false;
+                    disconnectBtn.disabled = true;
+                });
+            } else {
+                log(" Client not connected");
+            }
+        };
+
+     
+        function addRowToTable(data) {
+            const tbody = document.querySelector("#dataTable tbody");
+            const row = document.createElement("tr");
+
+          
+            const timestamp = data.timestamp || data.Timestamp || new Date().toLocaleString();
+            const meterId = data.meter_id || data.MeterId || "N/A";
+            const customerId = data.customer_id || data.CustomerId || "N/A";
+
+          
+            let voltage = "N/A";
+            let current = "N/A";
+            if (data.data) {
+                voltage = data.data.voltage_reading ?? data.data.VoltageReading ?? "N/A";
+                current = data.data.current_reading ?? data.data.CurrentReading ?? "N/A";
+            } else {
+                voltage = data.voltage_reading ?? data.VoltageReading ?? "N/A";
+                current = data.current_reading ?? data.CurrentReading ?? "N/A";
+            }
+
+            row.innerHTML = `
+                <td>${timestamp}</td>
+                <td>${meterId}</td>
+                <td>${customerId}</td>
+                <td>${voltage}</td>
+                <td>${current}</td>
+            `;
+            tbody.prepend(row);
+
+         
+            while (tbody.rows.length > 5) {
+                tbody.deleteRow(tbody.rows.length - 1);
+            }
+        }
+    </script>
+</body>
+</html>
