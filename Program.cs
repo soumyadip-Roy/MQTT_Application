@@ -1,97 +1,106 @@
-﻿using System.Data.SqlClient;
-using MQTTnet;
+﻿using MQTTnet;
 using MQTTnet.Client;
-using MQTTnet.Packets;
-using System.Text.Json;
-using Microsoft.Data.SqlClient;
+using MQTTnet.Protocol;
 
-
-namespace DatabaseConsole
+namespace AdminApplication
 {
-    class Program
+    internal class Program
     {
-        static IMqttClient mqttClient;
-        static string connectionString = "Server=LAPTOP-MDVNPCGM;Database=meter_readings;Trusted_Connection=true;TrustServerCertificate=true";
-        static string brokerIp = "172.16.103.199";
-        static string dataTopic = "esp32/data/team_b_proj/meter_1123";
+        private static IMqttClient mqttClient;
+        private static string brokerIp = "172.16.103.199";
+        private static int brokerPort = 1881;
+        private static string requestTopic = "esp32/admin/team_b_proj/request";
+        private static string responseTopic = "esp32/admin/team_b_proj/response";
 
         static async Task Main(string[] args)
         {
-            await StartMqtt();
-            Console.ReadLine();
+            await InitializeMqtt();
+            await ShowMenu();
         }
 
-        static async Task StartMqtt()
+        static async Task InitializeMqtt()
         {
             var factory = new MqttFactory();
             mqttClient = factory.CreateMqttClient();
 
-            mqttClient.ApplicationMessageReceivedAsync += async e => await HandleMessage(e);
-            mqttClient.ConnectedAsync += async e => await HandleConnected();
-            mqttClient.DisconnectedAsync += async e => await HandleDisconnected();
+            mqttClient.ApplicationMessageReceivedAsync += e => HandleResponse(e);
+            mqttClient.ConnectedAsync += e => HandleConnected();
+            mqttClient.DisconnectedAsync += e => HandleDisconnected();
 
             var options = new MqttClientOptionsBuilder()
-                .WithTcpServer(brokerIp,1881)
-                .WithClientId("DatabaseConsole")
+                .WithTcpServer(brokerIp, brokerPort)
+                .WithClientId("AdminConsole")
                 .Build();
 
             await mqttClient.ConnectAsync(options);
-            await mqttClient.SubscribeAsync(dataTopic);
+            await mqttClient.SubscribeAsync(responseTopic);
         }
 
-        static Task HandleMessage(MqttApplicationMessageReceivedEventArgs e)
+        static Task HandleResponse(MqttApplicationMessageReceivedEventArgs e)
         {
-            string json = System.Text.Encoding.UTF8.GetString(e.ApplicationMessage.Payload);
-            SaveData(json);
-            Console.WriteLine(json);
+            var message = System.Text.Encoding.UTF8.GetString(e.ApplicationMessage.Payload);
+            Console.WriteLine($"\n[{DateTime.UtcNow}] Response: {message}");
             return Task.CompletedTask;
         }
 
         static Task HandleConnected()
         {
-            Console.WriteLine("Connected to MQTT broker");
+            Console.WriteLine($"\n[{DateTime.UtcNow}] Connected to MQTT broker");
             return Task.CompletedTask;
         }
 
         static Task HandleDisconnected()
         {
-            Console.WriteLine("Disconnected from MQTT broker");
+            Console.WriteLine($"\n[{DateTime.UtcNow}] Disconnected from MQTT broker");
             return Task.CompletedTask;
         }
 
-        static void SaveData(string json)
+        static async Task ShowMenu()
         {
-            try
+            while (true)
             {
-                using JsonDocument doc = JsonDocument.Parse(json);
-                JsonElement root = doc.RootElement;
+                Console.WriteLine("\n<========== Admin Console ==========>");
+                Console.WriteLine("[1]> Start Device");
+                Console.WriteLine("[2]> Stop Device");
+                Console.WriteLine("[3]> Check Status");
+                Console.WriteLine("[4]> Exit");
+                Console.Write("Select option: ");
 
-                string timestamp =root.GetProperty("timestamp").GetString();
-                string meterId = root.GetProperty("meter_id").GetString();
-                string customerId = root.GetProperty("customer_id").GetString();
-                JsonElement data = root.GetProperty("data");
-                decimal voltage = data.GetProperty("voltage_reading").GetDecimal();
-                decimal current = data.GetProperty("current_reading").GetDecimal();
+                var input = Console.ReadLine();
 
-                using SqlConnection connection = new SqlConnection(connectionString);
-                connection.Open();
+                switch (input)
+                {
+                    case "1":
+                        await SendCommand("start");
+                        break;
+                    case "2":
+                        await SendCommand("stop");
+                        break;
+                    case "3":
+                        await SendCommand("status");
+                        break;
+                    case "4":
+                        await mqttClient.DisconnectAsync();
+                        return;
+                    default:
+                        Console.WriteLine("Invalid option");
+                        break;
+                }
 
-                string sql = "INSERT INTO MeterReadings (Timestamp, MeterId, CustomerId, VoltageReading, CurrentReading) VALUES (@t, @m, @c, @v, @a)";
-
-                using SqlCommand command = new SqlCommand(sql, connection);
-                command.Parameters.AddWithValue("@t", timestamp);
-                command.Parameters.AddWithValue("@m", meterId);
-                command.Parameters.AddWithValue("@c", customerId);
-                command.Parameters.AddWithValue("@v", voltage);
-                command.Parameters.AddWithValue("@a", current);
-
-                command.ExecuteNonQuery();
-                Console.WriteLine($"Saved data for meter: {meterId}");
+                await Task.Delay(1000);
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error: {ex.Message}");
-            }
+        }
+
+        static async Task SendCommand(string command)
+        {
+            var message = new MqttApplicationMessageBuilder()
+                .WithTopic(requestTopic)
+                .WithPayload(command)
+                .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
+                .Build();
+
+            await mqttClient.PublishAsync(message);
+            Console.WriteLine($"\n[{DateTime.UtcNow}] Sent command: {command}");
         }
     }
 }
